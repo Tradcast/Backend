@@ -1,7 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
-
 async def handle_streak(fid: str, user, firestore_manager):
     now = datetime.now(timezone.utc)
 

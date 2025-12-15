@@ -3,7 +3,12 @@ import base64
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
-from configs.config import SECRET_KEY
+
+
+# CRITICAL: Move this to environment variable in production!
+SECRET_KEY = "74bd7aa5fe7cebe852e09b2e5a6496ddd22d47640110fda654b1cf4ff53a4e1c05ef3e1866f6db6d9c23188143af1214"  # Must match the Node.js SECRET_KEY
+
+# please use salt....
 
 
 def decrypt(encrypted_data: str, secret: str) -> str:
