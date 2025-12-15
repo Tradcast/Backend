@@ -1,18 +1,16 @@
 from google.cloud import firestore
 from google.cloud.firestore_v1.async_client import AsyncClient
-from datetime import datetime
+from datetime import datetime, timedelta
 import string, time, asyncio, random
 from typing import Optional, Dict, Any, List
-from configs.config import firestore_project_name
 
 
 class FirestoreManager:
     def __init__(self):
         """Initialize async Firestore client"""
-        self.db: AsyncClient = firestore.AsyncClient(project=firestore_project_name)
+        self.db: AsyncClient = firestore.AsyncClient(project="miniapp-479712")
 
         self.users_collection = "users"
-        self.game_sessions_collection = "game_sessions"
         self.trade_decisions_collection = "trade_decisions"
     
     def _generate_invitation_key(self, length: int = 6) -> str:
@@ -63,11 +61,6 @@ class FirestoreManager:
         
         # Save to Firestore
         await self.db.collection(self.users_collection).document(fid).set(user_data)
-        
-        # Also initialize empty game_sessions array for this user
-        await self.db.collection(self.game_sessions_collection).document(fid).set({
-            "game_sessions": []
-        })
         
         return user_data
     
@@ -219,14 +212,9 @@ class FirestoreManager:
             True if successful, False otherwise
         """
         try:
-            # 1. Add game_session to the user's game_sessions array
-            game_sessions_ref = self.db.collection(self.game_sessions_collection).document(fid)
-            await game_sessions_ref.update({
-                "game_sessions": firestore.ArrayUnion([trade_env_id])
-            })
-            
-            # 2. Create the trade_decisions document
+            # Create the trade_decisions document with fid included
             trade_decisions_data = {
+                "fid": fid,
                 "trade_env_id": trade_env_id,
                 "actions": actions,
                 "created_at": firestore.SERVER_TIMESTAMP
@@ -243,21 +231,24 @@ class FirestoreManager:
     
     async def get_game_sessions(self, fid: str) -> Optional[List[str]]:
         """
-        Get all game session IDs for a user
+        Get all game session IDs for a user by querying trade_decisions
         
         Args:
             fid: User's FID
             
         Returns:
-            List of game session IDs or None
+            List of game session IDs (trade_env_ids) or None
         """
-        doc_ref = self.db.collection(self.game_sessions_collection).document(fid)
-        doc = await doc_ref.get()
-        
-        if doc.exists:
-            data = doc.to_dict()
-            return data.get("game_sessions", [])
-        return None
+        try:
+            query = self.db.collection(self.trade_decisions_collection).where("fid", "==", fid)
+            docs = await query.get()
+            
+            if docs:
+                return [doc.id for doc in docs]
+            return []
+        except Exception as e:
+            print(f"Error getting game sessions for {fid}: {e}")
+            return None
     
     async def get_trade_decisions(self, trade_env_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -295,10 +286,7 @@ class FirestoreManager:
                 for trade_env_id in game_sessions:
                     await self.db.collection(self.trade_decisions_collection).document(trade_env_id).delete()
 
-            # 3. Delete the game_sessions document
-            await self.db.collection(self.game_sessions_collection).document(fid).delete()
-
-            # 4. Delete the user document
+            # 3. Delete the user document
             await self.db.collection(self.users_collection).document(fid).delete()
 
             return True
@@ -355,14 +343,9 @@ class FirestoreManager:
             True if successful, False otherwise
         """
         try:
-            # 1. Add game session to user's session array
-            game_sessions_ref = self.db.collection(self.game_sessions_collection).document(fid)
-            await game_sessions_ref.update({
-                "game_sessions": firestore.ArrayUnion([trade_env_id])
-            })
-
-            # 2. Save trade decisions
+            # 1. Save trade decisions with fid included
             trade_decisions_data = {
+                "fid": fid,
                 "trade_env_id": trade_env_id,
                 "actions": actions,
                 "final_pnl": final_pnl,
@@ -373,7 +356,7 @@ class FirestoreManager:
                 trade_decisions_data
             )
 
-            # 3. Update user totals
+            # 2. Update user totals
             user_ref = self.db.collection(self.users_collection).document(fid)
             await user_ref.update({
                 "total_games": firestore.Increment(1),
@@ -387,13 +370,284 @@ class FirestoreManager:
             print(f"Error saving game session result for {fid}: {e}")
             return False
 
+    async def get_leaderboard(self, fid: str, top_n: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get leaderboard based on total_profit from users collection
+        
+        Args:
+            fid: User's FID to mark in leaderboard
+            top_n: Number of top users to return (default 10)
+            
+        Returns:
+            List of leaderboard entries with format:
+            [{"username": str, "total_profit": float, "the_user": bool, "rank": int}, ...]
+        """
+        try:
+            # Get top N users ordered by total_profit
+            query = self.db.collection(self.users_collection).order_by(
+                "total_profit", direction=firestore.Query.DESCENDING
+            ).limit(top_n)
+            docs = await query.get()
+            
+            # Get the requesting user's data
+            user_doc = await self.get_user(fid)
+            user_username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
+            user_profit = user_doc.get("total_profit", 0) if user_doc else 0
+            
+            # Build leaderboard
+            leaderboard = []
+            user_in_top = False
+            user_rank = None
+            
+            for idx, doc in enumerate(docs, start=1):
+                data = doc.to_dict()
+                doc_fid = doc.id
+                
+                entry = {
+                    "username": data.get("username", "Unknown"),
+                    "total_profit": data.get("total_profit", 0),
+                    "the_user": doc_fid == fid,
+                    "rank": idx
+                }
+                
+                if doc_fid == fid:
+                    user_in_top = True
+                    user_rank = idx
+                
+                leaderboard.append(entry)
+            
+            # If user is not in top N, add them as 11th entry
+            if not user_in_top:
+                # Find user's actual rank
+                all_users_query = self.db.collection(self.users_collection).order_by(
+                    "total_profit", direction=firestore.Query.DESCENDING
+                )
+                all_docs = await all_users_query.get()
+                
+                user_rank = None
+                for idx, doc in enumerate(all_docs, start=1):
+                    if doc.id == fid:
+                        user_rank = idx
+                        break
+                
+                # Add user's entry
+                leaderboard.append({
+                    "username": user_username,
+                    "total_profit": user_profit,
+                    "the_user": True,
+                    "rank": user_rank if user_rank else len(all_docs) + 1
+                })
+            
+            return leaderboard
+            
+        except Exception as e:
+            print(f"Error getting leaderboard: {e}")
+            return []
+
+    async def get_weekly_leaderboard(self, fid: str, top_n: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get weekly leaderboard based on final_profit from trade_decisions collection
+        Filters for games created in the last 7 days
+        
+        Args:
+            fid: User's FID to mark in leaderboard
+            top_n: Number of top users to return (default 10)
+            
+        Returns:
+            List of leaderboard entries with format:
+            [{"username": str, "final_profit": float, "the_user": bool, "rank": int}, ...]
+        """
+        try:
+            # Calculate timestamp for 1 week ago
+            one_week_ago = datetime.now() - timedelta(days=7)
+            
+            # Get all trade decisions from last week
+            query = self.db.collection(self.trade_decisions_collection).where(
+                "created_at", ">=", one_week_ago
+            )
+            docs = await query.get()
+            
+            # Aggregate profits by user
+            user_profits = {}
+            for doc in docs:
+                data = doc.to_dict()
+                user_fid = data.get("fid")
+                final_profit = data.get("final_profit", 0)
+                
+                if user_fid:
+                    if user_fid not in user_profits:
+                        user_profits[user_fid] = 0
+                    user_profits[user_fid] += final_profit
+            
+            # Sort users by total weekly profit
+            sorted_users = sorted(
+                user_profits.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            )
+            
+            # Get usernames for all users
+            leaderboard = []
+            user_in_top = False
+            user_rank = None
+            
+            for idx, (user_fid, profit) in enumerate(sorted_users[:top_n], start=1):
+                user_doc = await self.get_user(user_fid)
+                username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
+                
+                entry = {
+                    "username": username,
+                    "final_profit": profit,
+                    "the_user": user_fid == fid,
+                    "rank": idx
+                }
+                
+                if user_fid == fid:
+                    user_in_top = True
+                    user_rank = idx
+                
+                leaderboard.append(entry)
+            
+            # If user is not in top N, add them
+            if not user_in_top:
+                user_profit = user_profits.get(fid, 0)
+                user_doc = await self.get_user(fid)
+                username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
+                
+                # Find user's rank
+                for idx, (user_fid, _) in enumerate(sorted_users, start=1):
+                    if user_fid == fid:
+                        user_rank = idx
+                        break
+                
+                if user_rank is None:
+                    user_rank = len(sorted_users) + 1
+                
+                leaderboard.append({
+                    "username": username,
+                    "final_profit": user_profit,
+                    "the_user": True,
+                    "rank": user_rank
+                })
+            
+            return leaderboard
+            
+        except Exception as e:
+            print(f"Error getting weekly leaderboard: {e}")
+            return []
+
+    
+    async def get_latest_trades(self, fid: str, number: int = 4) -> List[Dict[str, Any]]:
+        """
+        Get the latest N trades for a specific user
+    
+        Args:
+            fid: User's FID
+            number: Number of latest trades to retrieve (default 4)
+    
+        Returns:
+            List of trade decision documents ordered by created_at (newest first)
+            Each entry contains: trade_env_id, actions, final_pnl, final_profit, created_at
+        """
+        try:
+            # Query trade_decisions collection filtered by fid
+            query = self.db.collection(self.trade_decisions_collection).where(
+                "fid", "==", fid
+            ).order_by(
+                "created_at", direction=firestore.Query.DESCENDING
+            ).limit(number)
+    
+            docs = await query.get()
+    
+            # Build list of trade data
+            trades = []
+            for doc in docs:
+                data = doc.to_dict()
+                trades.append({
+                    "trade_env_id": doc.id,
+                    "actions": data.get("actions", []),
+                    "final_pnl": data.get("final_pnl", 0),
+                    "final_profit": data.get("final_profit", 0),
+                    "created_at": data.get("created_at")
+                })
+    
+            return trades
+    
+        except Exception as e:
+            print(f"Error getting latest trades for {fid}: {e}")
+            return []
+
 
 async def main():
     firestore_manager = FirestoreManager()
-    await firestore_manager.initiate_user('123123')
-    await firestore_manager.initiate_user('123124')
-    await firestore_manager.delete_user('123123')
-    await asyncio.sleep(1)      
+    
+    # Test user initialization
+    print("=== Testing User Initialization ===")
+    await firestore_manager.initiate_user('user1', username='Alice', wallet='wallet1')
+    await firestore_manager.initiate_user('user2', username='Bob', wallet='wallet2')
+    await firestore_manager.initiate_user('user3', username='Charlie', wallet='wallet3')
+    await firestore_manager.initiate_user('user4', username='David', wallet='wallet4')
+    await firestore_manager.initiate_user('user5', username='Eve', wallet='wallet5')
+    
+    # Add some game sessions with different profits
+    print("\n=== Testing Game Session Results ===")
+    await firestore_manager.save_game_session_result(
+        'user1', 'game1', [{"action": "buy", "time": 10}], 100, 150
+    )
+    await firestore_manager.save_game_session_result(
+        'user2', 'game2', [{"action": "sell", "time": 20}], 200, 300
+    )
+    await firestore_manager.save_game_session_result(
+        'user3', 'game3', [{"action": "buy", "time": 15}], 150, 200
+    )
+    await firestore_manager.save_game_session_result(
+        'user4', 'game4', [{"action": "sell", "time": 25}], 50, 75
+    )
+    await firestore_manager.save_game_session_result(
+        'user5', 'game5', [{"action": "buy", "time": 30}], 300, 500
+    )
+    
+    # Add more games for weekly leaderboard test
+    await firestore_manager.save_game_session_result(
+        'user1', 'game6', [{"action": "buy", "time": 10}], 50, 100
+    )
+    await firestore_manager.save_game_session_result(
+        'user2', 'game7', [{"action": "sell", "time": 20}], 100, 150
+    )
+    
+    await asyncio.sleep(2)  # Wait for writes to complete
+    
+    # Test all-time leaderboard
+    print("\n=== Testing All-Time Leaderboard ===")
+    print("Leaderboard for user3 (should be in top 10):")
+    leaderboard = await firestore_manager.get_leaderboard('user3', top_n=3)
+    for entry in leaderboard:
+        print(f"  Rank {entry['rank']}: {entry['username']} - ${entry['total_profit']:.2f} {'<-- YOU' if entry['the_user'] else ''}")
+    
+    print("\nLeaderboard for user4 (lower ranked):")
+    leaderboard = await firestore_manager.get_leaderboard('devol', top_n=3)
+    print(leaderboard)
+    for entry in leaderboard:
+        print(f"  Rank {entry['rank']}: {entry['username']} - ${entry['total_profit']:.2f} {'<-- YOU' if entry['the_user'] else ''}")
+    
+    # Test weekly leaderboard
+    print("\n=== Testing Weekly Leaderboard ===")
+    print("Weekly leaderboard for user1:")
+    weekly_leaderboard = await firestore_manager.get_weekly_leaderboard('user1', top_n=10)
+    print(weekly_leaderboard)
+    for entry in weekly_leaderboard:
+        print(f"  Rank {entry['rank']}: {entry['username']} - ${entry['final_profit']:.2f} {'<-- YOU' if entry['the_user'] else ''}")
+    
+    print("\nWeekly leaderboard for user4:")
+    weekly_leaderboard = await firestore_manager.get_weekly_leaderboard('user4', top_n=10)
+    for entry in weekly_leaderboard:
+        print(f"  Rank {entry['rank']}: {entry['username']} - ${entry['final_profit']:.2f} {'<-- YOU' if entry['the_user'] else ''}")
+    
+    # Cleanup
+    print("\n=== Cleaning Up Test Data ===")
+    await firestore_manager.delete_multiple_users(['user1', 'user2', 'user3', 'user4', 'user5'])
+    print("Cleanup complete!")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
