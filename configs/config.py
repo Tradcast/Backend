@@ -1,19 +1,25 @@
+# /configs/config.py
 import os
-import load_dotenv
+from dotenv import load_dotenv
 
-load_dotenv()
-SECRET_KEY = os.environ.get('SECRET_KEY')
-
-# Whether to use environment variable for working directory
 use_env_working_dir = False
-
-# ENV variable name for dynamic working dir
+working_dir = "/root/miniapp_backend/game"
 ENV_WORKING_DIR_KEY = "WORKING_DIR"
 
-# Fallback working directory (used if above is False)
-working_dir = "/home/..." # your working dir, where main.py is...
+# Decide working dir
+BASE_DIR = (
+    os.getenv(ENV_WORKING_DIR_KEY)
+    if use_env_working_dir and os.getenv(ENV_WORKING_DIR_KEY)
+    else working_dir
+)
 
-firestore_project_name = "your-project-name"
+# Load .env from game directory
+dotenv_path = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path)
+
+# Read secret
+SECRET = os.getenv("SECRET")
+
 
 def get_base_dir() -> str:
     """
@@ -39,12 +45,35 @@ def get_klines_dir() -> str:
 
 
 WS_ALLOWED_ORIGINS = {
-    # https://domain
+    "https://dev.simmerliq.com",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+        "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://demoapp.prime-academy.online",
+   'https://tradcastdev.prime-academy.online',
+   'https://tradcast.simmerliq.com'
     }
 
 
 # ✅ Allowed origins for HTTP
 CORS_ALLOWED_ORIGINS = [
-    # domain
+    'https://tradcastdev.prime-academy.online',
+        "https://dev.simmerliq.com",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "demoapp.prime-academy.online",
+    'tradcastdev.prime-academy.online',
+    'tradcast.simmerliq.com'
     ]
 
