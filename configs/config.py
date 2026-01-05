@@ -52,8 +52,13 @@ WS_ALLOWED_ORIGINS = {
     "http://127.0.0.1:5173",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
-        "http://localhost:3000",
+    "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3030",
+    "http://127.0.0.1:3030",
+    "http://localhost:5009",
+    "http://127.0.0.1:5009",
+    'https://ws.simmerliq.com',
     "https://demoapp.prime-academy.online",
    'https://tradcastdev.prime-academy.online',
    'https://tradcast.simmerliq.com'
@@ -63,7 +68,7 @@ WS_ALLOWED_ORIGINS = {
 # ✅ Allowed origins for HTTP
 CORS_ALLOWED_ORIGINS = [
     'https://tradcastdev.prime-academy.online',
-        "https://dev.simmerliq.com",
+    "https://dev.simmerliq.com",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://localhost:5173",
@@ -72,8 +77,12 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3001",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5009",
+    "http://127.0.0.1:5009",
+    "localhost:5009",
     "demoapp.prime-academy.online",
     'tradcastdev.prime-academy.online',
-    'tradcast.simmerliq.com'
+    'tradcast.simmerliq.com',
+    'ws.simmerliq.com'
     ]
 
