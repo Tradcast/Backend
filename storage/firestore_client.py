@@ -444,138 +444,241 @@ class FirestoreManager:
             print(f"Error getting leaderboard: {e}")
             return []
 
+
+
     async def get_weekly_leaderboard(self, fid: str, top_n: int = 10) -> List[Dict[str, Any]]:
         """
         Get weekly leaderboard based on final_profit from trade_decisions collection
         Filters for games created in the last 7 days
-        
+
         Args:
             fid: User's FID to mark in leaderboard
             top_n: Number of top users to return (default 10)
-            
+
         Returns:
             List of leaderboard entries with format:
-            [{"username": str, "final_profit": float, "the_user": bool, "rank": int}, ...]
+            [{"username": str, "weekly_profit": float, "the_user": bool, "rank": int}, ...]
         """
         try:
             # Calculate timestamp for 1 week ago
             one_week_ago = datetime.now() - timedelta(days=7)
-            
+
             # Get all trade decisions from last week
+            # Note: This requires a composite index on (created_at)
             query = self.db.collection(self.trade_decisions_collection).where(
                 "created_at", ">=", one_week_ago
             )
             docs = await query.get()
-            
+
             # Aggregate profits by user
             user_profits = {}
             for doc in docs:
                 data = doc.to_dict()
                 user_fid = data.get("fid")
                 final_profit = data.get("final_profit", 0)
-                
+
                 if user_fid:
                     if user_fid not in user_profits:
                         user_profits[user_fid] = 0
                     user_profits[user_fid] += final_profit
-            
-            # Sort users by total weekly profit
+
+            # Sort users by total weekly profit (descending)
             sorted_users = sorted(
-                user_profits.items(), 
-                key=lambda x: x[1], 
+                user_profits.items(),
+                key=lambda x: x[1],
                 reverse=True
             )
-            
-            # Get usernames for all users
+
+            # Build leaderboard with usernames
             leaderboard = []
             user_in_top = False
             user_rank = None
-            
+            requesting_user_profit = 0
+
+            # Get top N users
             for idx, (user_fid, profit) in enumerate(sorted_users[:top_n], start=1):
                 user_doc = await self.get_user(user_fid)
                 username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
-                
+
                 entry = {
                     "username": username,
-                    "final_profit": profit,
+                    "weekly_profit": profit,
                     "the_user": user_fid == fid,
                     "rank": idx
                 }
-                
+
                 if user_fid == fid:
                     user_in_top = True
                     user_rank = idx
-                
+                    requesting_user_profit = profit
+
                 leaderboard.append(entry)
-            
-            # If user is not in top N, add them
+
+            # If requesting user is not in top N, add them to the end
             if not user_in_top:
-                user_profit = user_profits.get(fid, 0)
+                requesting_user_profit = user_profits.get(fid, 0)
                 user_doc = await self.get_user(fid)
                 username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
-                
-                # Find user's rank
+
+                # Find user's actual rank in full list
                 for idx, (user_fid, _) in enumerate(sorted_users, start=1):
                     if user_fid == fid:
                         user_rank = idx
                         break
-                
+
+                # If user has no trades this week, rank is after everyone
                 if user_rank is None:
-                    user_rank = len(sorted_users) + 1
-                
+                    user_rank = len(sorted_users) + 1 if requesting_user_profit == 0 else len(sorted_users)
+
                 leaderboard.append({
                     "username": username,
-                    "final_profit": user_profit,
+                    "weekly_profit": requesting_user_profit,
                     "the_user": True,
                     "rank": user_rank
                 })
-            
+
             return leaderboard
-            
+
         except Exception as e:
             print(f"Error getting weekly leaderboard: {e}")
             return []
 
-    
+
+    async def get_daily_leaderboard(self, fid: str, top_n: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get daily leaderboard based on final_profit from trade_decisions collection
+        Filters for games created in the last 24 hours
+
+        Args:
+            fid: User's FID to mark in leaderboard
+            top_n: Number of top users to return (default 10)
+
+        Returns:
+            List of leaderboard entries with format:
+            [{"username": str, "daily_profit": float, "the_user": bool, "rank": int}, ...]
+        """
+        try:
+            # Calculate timestamp for 24 hours ago
+            one_day_ago = datetime.now() - timedelta(days=1)
+
+            # Get all trade decisions from last 24 hours
+            # Note: This requires a composite index on (created_at)
+            query = self.db.collection(self.trade_decisions_collection).where(
+                "created_at", ">=", one_day_ago
+            )
+            docs = await query.get()
+
+            # Aggregate profits by user
+            user_profits = {}
+            for doc in docs:
+                data = doc.to_dict()
+                user_fid = data.get("fid")
+                final_profit = data.get("final_profit", 0)
+
+                if user_fid:
+                    if user_fid not in user_profits:
+                        user_profits[user_fid] = 0
+                    user_profits[user_fid] += final_profit
+
+            # Sort users by total daily profit (descending)
+            sorted_users = sorted(
+                user_profits.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            # Build leaderboard with usernames
+            leaderboard = []
+            user_in_top = False
+            user_rank = None
+            requesting_user_profit = 0
+
+            # Get top N users
+            for idx, (user_fid, profit) in enumerate(sorted_users[:top_n], start=1):
+                user_doc = await self.get_user(user_fid)
+                username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
+
+                entry = {
+                    "username": username,
+                    "daily_profit": profit,
+                    "the_user": user_fid == fid,
+                    "rank": idx
+                }
+
+                if user_fid == fid:
+                    user_in_top = True
+                    user_rank = idx
+                    requesting_user_profit = profit
+
+                leaderboard.append(entry)
+
+            # If requesting user is not in top N, add them to the end
+            if not user_in_top:
+                requesting_user_profit = user_profits.get(fid, 0)
+                user_doc = await self.get_user(fid)
+                username = user_doc.get("username", "Unknown") if user_doc else "Unknown"
+
+                # Find user's actual rank in full list
+                for idx, (user_fid, _) in enumerate(sorted_users, start=1):
+                    if user_fid == fid:
+                        user_rank = idx
+                        break
+
+                # If user has no trades today, rank is after everyone
+                if user_rank is None:
+                    user_rank = len(sorted_users) + 1 if requesting_user_profit == 0 else len(sorted_users)
+
+                leaderboard.append({
+                    "username": username,
+                    "daily_profit": requesting_user_profit,
+                    "the_user": True,
+                    "rank": user_rank
+                })
+
+            return leaderboard
+
+        except Exception as e:
+            print(f"Error getting daily leaderboard: {e}")
+            return []
+
     async def get_latest_trades(self, fid: str, number: int = 4) -> List[Dict[str, Any]]:
         """
         Get the latest N trades for a specific user
-    
+
         Args:
             fid: User's FID
             number: Number of latest trades to retrieve (default 4)
-    
+
         Returns:
             List of trade decision documents ordered by created_at (newest first)
             Each entry contains: trade_env_id, actions, final_pnl, final_profit, created_at
         """
         try:
-            # Query trade_decisions collection filtered by fid
+            # Query trade_decisions collection filtered by fid field
             query = self.db.collection(self.trade_decisions_collection).where(
                 "fid", "==", fid
             ).order_by(
                 "created_at", direction=firestore.Query.DESCENDING
             ).limit(number)
-    
+
             docs = await query.get()
-    
+
             # Build list of trade data
             trades = []
             for doc in docs:
                 data = doc.to_dict()
                 trades.append({
-                    "trade_env_id": doc.id,
-                    "actions": data.get("actions", []),
                     "final_pnl": data.get("final_pnl", 0),
                     "final_profit": data.get("final_profit", 0),
                     "created_at": data.get("created_at")
                 })
-    
+
             return trades
-    
+
         except Exception as e:
             print(f"Error getting latest trades for {fid}: {e}")
             return []
+
 
 
 async def main():
