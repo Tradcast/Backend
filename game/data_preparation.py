@@ -25,6 +25,7 @@ def load_parquet_klines(start_index: int = 0, debug: bool = False):
 
         # Extract token name (before first "_")
         token = filename.split("_")[0].lower()
+        token += '-session-' + filename.split("_")[2].lower()
 
         try:
             df = pd.read_parquet(fp)
@@ -45,8 +46,9 @@ def load_parquet_klines(start_index: int = 0, debug: bool = False):
 
 
 print(get_klines_dir())
-spike_df_map = load_parquet_klines(start_index=35)
+spike_df_map = load_parquet_klines(start_index=35, debug=True)
 random_token = random.choice(list(spike_df_map.keys()))
+print(spike_df_map)
 
 if __name__ == '__main__':
     print(random_token, spike_df_map)
