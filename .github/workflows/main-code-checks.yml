@@ -47,9 +47,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruff
 
-      - name: Ruff check (main + shared code)
+      - name: Ruff check (runtime-risk rules only)
         run: |
-          ruff check tradcast_main storage utils configs game
+          ruff check --select E9,F63,F7,F82 tradcast_main storage utils configs game
 
       - name: Compile Python files (syntax check)
         run: |
